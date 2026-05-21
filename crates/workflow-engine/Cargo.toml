@@ -8,3 +8,4 @@ almanx-collector = { path = "../collector" }
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
+md5 = "0.7.0"

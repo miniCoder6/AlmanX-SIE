@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+almanx-collector = { path = "../collector" }
+almanx-workflow-engine = { path = "../workflow-engine" }
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
