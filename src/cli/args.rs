@@ -1,14 +1,11 @@
 // ─── cli/args.rs ──────────────────────────────────────────────────────────────
-//
-// Clap-derived CLI.  Each subcommand maps 1:1 to a handler in main.rs.
-
 use clap::{Parser, Subcommand as ClapSubcommand, ValueEnum};
 
 /// AlmanX — shell intelligence engine.
 ///
 /// Run without arguments to open the interactive TUI.
 #[derive(Debug, Parser)]
-#[command(name = "almanx", version, about, long_about = None)]
+#[command(name = "almanx", version, about = "Shell intelligence engine — track, search, and alias your commands", long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
     pub subcommand: Option<Subcommand>,
@@ -16,16 +13,44 @@ pub struct Cli {
 
 #[derive(Debug, ClapSubcommand)]
 pub enum Subcommand {
-    /// Record a raw shell command (called by shell hooks, not by users directly).
+    /// Record a raw shell command (called by shell hooks automatically).
     #[command(hide = true)]
     Record {
-        /// The command string to record.
+        /// The command string(s) to record.
         command: Vec<String>,
+        /// Current working directory.
+        #[arg(long, default_value = "")]
+        cwd: String,
+        /// Exit code of the command.
+        #[arg(long, default_value_t = 0)]
+        exit_code: i32,
+        /// Duration in milliseconds.
+        #[arg(long, default_value_t = 0)]
+        duration: u64,
+    },
+
+    /// Fuzzy search your command history.
+    Search {
+        /// The query string to search for.
+        query: String,
+        /// Maximum number of results to show.
+        #[arg(short, long, default_value_t = 15)]
+        limit: usize,
+    },
+
+    /// Show productivity analytics and stats.
+    Stats,
+
+    /// Show mined workflow patterns (frequently repeated command sequences).
+    Workflows {
+        /// Minimum frequency to display.
+        #[arg(short, long, default_value_t = 2)]
+        min_freq: u32,
     },
 
     /// Suggest alias names for your most-used commands.
     Suggest {
-        /// How many suggestions to show (default: 10).
+        /// How many suggestions to show.
         #[arg(short, long, default_value_t = 10)]
         num: usize,
     },

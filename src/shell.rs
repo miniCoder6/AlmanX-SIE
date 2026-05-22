@@ -1,8 +1,8 @@
 // ─── shell.rs ─────────────────────────────────────────────────────────────────
 //
 // Generates shell-specific init snippets.
-// The snippet wires up a preexec hook that calls `almanx record <cmd>`
-// silently after every command, and sources the user's alias file on startup.
+// The snippet wires preexec/precmd hooks to call `almanx record` after each
+// command, passing full telemetry (CWD, exit code, duration).
 
 use crate::cli::Shell;
 use std::path::PathBuf;
@@ -20,10 +20,7 @@ impl ShellContext {
             .unwrap_or_else(|_| PathBuf::from("almanx"))
             .to_string_lossy()
             .to_string();
-        Self {
-            bin,
-            alias_file: alias_file.to_owned(),
-        }
+        Self { bin, alias_file: alias_file.to_owned() }
     }
 }
 
@@ -40,17 +37,31 @@ pub fn init_script(shell: &Shell, ctx: &ShellContext) -> String {
 fn bash(ctx: &ShellContext) -> String {
     format!(
         r#"# AlmanX shell integration — bash
-# Add to your ~/.bashrc:
-#   eval "$(almanx init bash)"
+# Add to ~/.bashrc:   eval "$(almanx init bash)"
 
-_almanx_record() {{
-    [ -n "$1" ] && "{bin}" record "$1" 2>/dev/null &
+_almanx_preexec() {{
+    _ALMANX_CMD="$BASH_COMMAND"
+    _ALMANX_START=$(date +%s%3N 2>/dev/null || echo 0)
 }}
 
-# Wire up preexec via the DEBUG trap (interactive shells only).
-[[ -n "$PS1" ]] && trap '_almanx_record "$BASH_COMMAND"' DEBUG
+_almanx_precmd() {{
+    local _exit=$?
+    if [ -n "$_ALMANX_CMD" ] && [ -n "$_ALMANX_START" ]; then
+        local _end _dur
+        _end=$(date +%s%3N 2>/dev/null || echo 0)
+        _dur=$(( _end - _ALMANX_START ))
+        "{bin}" record "$_ALMANX_CMD" \
+            --cwd "$PWD" \
+            --exit-code "$_exit" \
+            --duration "$_dur" 2>/dev/null &
+    fi
+    _ALMANX_CMD=""
+    _ALMANX_START=""
+}}
 
-# Source alias file.
+[[ -n "$PS1" ]] && trap '_almanx_preexec' DEBUG
+PROMPT_COMMAND="_almanx_precmd;${{PROMPT_COMMAND:-}}"
+
 [ -f "{alias_file}" ] && source "{alias_file}"
 "#,
         bin = ctx.bin,
@@ -63,17 +74,32 @@ _almanx_record() {{
 fn zsh(ctx: &ShellContext) -> String {
     format!(
         r#"# AlmanX shell integration — zsh
-# Add to your ~/.zshrc:
-#   eval "$(almanx init zsh)"
-
-_almanx_record() {{
-    [ -n "$1" ] && "{bin}" record "$1" 2>/dev/null &
-}}
+# Add to ~/.zshrc:   eval "$(almanx init zsh)"
 
 autoload -U add-zsh-hook
-add-zsh-hook preexec _almanx_record
+zmodload zsh/datetime 2>/dev/null || true
 
-# Source alias file.
+_almanx_preexec() {{
+    _ALMANX_CMD=$1
+    _ALMANX_START=$EPOCHREALTIME
+}}
+
+_almanx_precmd() {{
+    local _exit=$?
+    if [[ -n $_ALMANX_CMD && -n $_ALMANX_START ]]; then
+        local _dur=$(( int(($EPOCHREALTIME - $_ALMANX_START) * 1000) ))
+        "{bin}" record "$_ALMANX_CMD" \
+            --cwd "$PWD" \
+            --exit-code "$_exit" \
+            --duration "$_dur" 2>/dev/null &
+    fi
+    _ALMANX_CMD=""
+    _ALMANX_START=""
+}}
+
+add-zsh-hook preexec _almanx_preexec
+add-zsh-hook precmd _almanx_precmd
+
 [ -f "{alias_file}" ] && source "{alias_file}"
 "#,
         bin = ctx.bin,
@@ -86,14 +112,27 @@ add-zsh-hook preexec _almanx_record
 fn fish(ctx: &ShellContext) -> String {
     format!(
         r#"# AlmanX shell integration — fish
-# Add to your ~/.config/fish/config.fish:
-#   almanx init fish | source
+# Add to ~/.config/fish/config.fish:   almanx init fish | source
 
-function _almanx_record --on-event fish_preexec
-    test -n "$argv[1]"; and "{bin}" record "$argv[1]" 2>/dev/null &
+function _almanx_preexec --on-event fish_preexec
+    set -g _almanx_cmd $argv[1]
+    set -g _almanx_start (date +%s%3N 2>/dev/null; or echo 0)
 end
 
-# Source alias file.
+function _almanx_postexec --on-event fish_postexec
+    set -l _exit $status
+    if test -n "$_almanx_cmd"
+        set -l _end (date +%s%3N 2>/dev/null; or echo 0)
+        set -l _dur (math "$_end - $_almanx_start" 2>/dev/null; or echo 0)
+        "{bin}" record "$_almanx_cmd" \
+            --cwd "$PWD" \
+            --exit-code "$_exit" \
+            --duration "$_dur" 2>/dev/null &
+    end
+    set -e _almanx_cmd
+    set -e _almanx_start
+end
+
 test -f "{alias_file}"; and source "{alias_file}"
 "#,
         bin = ctx.bin,

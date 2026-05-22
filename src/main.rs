@@ -2,13 +2,15 @@
 //
 // AlmanX — shell intelligence engine
 //
-// Architecture overview:
-//   database/   — in-memory store, scoring, persistence
+// Architecture:
+//   database/   — in-memory command store, scoring, persistence
 //   ops/        — alias file I/O, alias suggestion engine
 //   cli/        — clap argument definitions
-//   tui/        — ratatui TUI (app state, event handler, renderer)
+//   tui/        — ratatui interactive TUI
 //   shell.rs    — shell init script generator
+//   analytics.rs— stats and workflow display
 
+mod analytics;
 mod cli;
 mod database;
 mod ops;
@@ -19,8 +21,7 @@ use clap::Parser;
 use cli::{Cli, Shell, Subcommand};
 use colored::*;
 use database::persistence::{
-    ensure_data_dir, load_config, load_db, load_deleted, save_config, save_db, save_deleted,
-    AppConfig,
+    ensure_data_dir, load_config, load_db, load_deleted, save_db, save_deleted,
 };
 use ops::alias_file::{add_alias_to_files, get_all_aliases, remove_alias_from_files};
 use shell::{init_script, ShellContext};
@@ -50,33 +51,53 @@ fn run() -> anyhow::Result<()> {
         }
 
         // ── Record a shell command (called by shell hooks) ────────────────────
-        Some(Subcommand::Record { command }) => {
+        Some(Subcommand::Record { command, cwd, exit_code, duration }) => {
             let text = command.join(" ");
             if text.is_empty() {
                 return Ok(());
             }
             let mut db      = load_db();
             let mut deleted = load_deleted();
-            db.record(text, &deleted);
+            db.record(text.clone(), &deleted);
             save_db(&db)?;
+
+            // Also append to the event log for workflow mining and search.
+            let storage_path = database::persistence::event_log_path();
+            let log = almanx_storage::EventLog::new(storage_path);
+            let event = almanx_collector::CommandEvent::new(text, cwd, exit_code, duration);
+            let _ = log.append(&event);
+        }
+
+        // ── Search command history ────────────────────────────────────────────
+        Some(Subcommand::Search { query, limit }) => {
+            analytics::search_commands(&query, limit)?;
+        }
+
+        // ── Show stats ────────────────────────────────────────────────────────
+        Some(Subcommand::Stats) => {
+            analytics::show_stats()?;
+        }
+
+        // ── Show workflow patterns ────────────────────────────────────────────
+        Some(Subcommand::Workflows { min_freq }) => {
+            analytics::show_workflows(min_freq)?;
         }
 
         // ── Suggest aliases ───────────────────────────────────────────────────
         Some(Subcommand::Suggest { num }) => {
-            let mut db      = load_db();
-            let deleted     = load_deleted();
-            let suggester   = ops::AliasSuggester::new(&primary_alias_file);
-            let commands    = db.top(num);
+            let mut db   = load_db();
+            let _deleted = load_deleted();
+            let suggester = ops::AliasSuggester::new(&primary_alias_file);
+            let commands  = db.top(num);
 
             if commands.is_empty() {
-                println!("{}", "No commands tracked yet.  Use AlmanX for a while first.".yellow());
+                println!("{}", "No commands tracked yet. Use your shell for a while first.".yellow());
                 return Ok(());
             }
 
-            // Table header
             let w_cmd   = commands.iter().map(|c| c.text.len()).max().unwrap_or(7).max(7);
             let w_alias = 12usize;
-            let w_why   = 30usize;
+            let w_why   = 35usize;
 
             println!(
                 "{} {} {}",
@@ -126,7 +147,6 @@ fn run() -> anyhow::Result<()> {
 
         // ── Rename alias ──────────────────────────────────────────────────────
         Some(Subcommand::Rename { old, new }) => {
-            // Find the command for the old alias.
             let all = get_all_aliases(&alias_files);
             if let Some((_, cmd)) = all.into_iter().find(|(a, _)| a == &old) {
                 remove_alias_from_files(&alias_files, &old);

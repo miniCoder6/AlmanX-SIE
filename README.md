@@ -1,132 +1,109 @@
-# AlmanX
+# 🚀 AlmanX — Shell Intelligence Engine
 
-**A local-first shell intelligence engine.**
+AlmanX is a **local-first, zero-dependency shell intelligence platform** written entirely in Rust. It silently tracks your terminal activity, mines workflow patterns, provides sub-millisecond fuzzy search, and suggests personalized shell aliases.
 
-AlmanX silently watches your shell commands, learns what you type most often,
-and suggests smart, conflict-free aliases to save you keystrokes — no cloud,
-no telemetry, no subscriptions.
+---
+
+## Features
+
+| Feature | Status | Description |
+|---|---|---|
+| Shell hooks (bash/zsh/fish) | ✅ | Auto-records every command you run |
+| Frecency-scored command DB | ✅ | Scores commands by frequency + recency |
+| Alias suggestion engine | ✅ | Semantic, abbreviation, and vowel-strip suggestions |
+| Fuzzy search (`almanx search`) | ✅ | Jaro-Winkler + substring + recency scoring |
+| Workflow mining (`almanx workflows`) | ✅ | N-gram DAG reconstruction from session history |
+| Productivity analytics (`almanx stats`) | ✅ | Keystroke savings, top commands, directories |
+| Interactive TUI | ✅ | Full ratatui interface with all features |
+| Event log (JSONL) | ✅ | Append-only log at `~/.almanx/events.jsonl` |
+| Alias file management | ✅ | Add/remove/rename/list aliases |
 
 ---
 
 ## Quick Start
 
 ```bash
-# 1. Build
-cargo build --release
+# 1. Build and install
+bash install.sh
 
-# 2. Wire up your shell (pick one)
-eval "$(almanx init bash)"   # → add to ~/.bashrc
-eval "$(almanx init zsh)"    # → add to ~/.zshrc
-almanx init fish | source    # → add to config.fish
+# 2. Wire up your shell (add to ~/.bashrc or ~/.zshrc)
+eval "$(almanx init bash)"    # bash
+eval "$(almanx init zsh)"     # zsh
+almanx init fish | source     # fish
 
-# 3. Use your shell as normal for a day or two, then:
-almanx suggest
+# 3. Reload your shell
+source ~/.bashrc
 
-# 4. Add an alias from the suggestions
-almanx add gp "git push"
-
-# 5. Or just open the TUI
-almanx
+# 4. Use your terminal normally for a while, then:
+almanx                        # Open interactive TUI
+almanx suggest                # Get alias suggestions
+almanx stats                  # View productivity report
+almanx search "git"           # Fuzzy search history
+almanx workflows              # View workflow patterns
 ```
 
 ---
 
-## How It Works
+## CLI Reference
 
 ```
-Your shell  ──preexec hook──►  almanx record "<cmd>"
-                                      │
-                               ~/.almanx/database.json
-                                      │
-                         frecency score = frequency × recency × length_weight
-                                      │
-                           almanx suggest  (top-N by score)
-                                      │
-                         Alias suggester checks PATH + existing aliases
-                         for conflicts, then ranks candidates
-                                      │
-                           You: almanx add <alias> <command>
-                                      │
-                           ~/.almanx/aliases  ←  alias gp='git push'
+almanx                          Launch interactive TUI
+almanx search <query>           Fuzzy search command history
+almanx stats                    Show productivity analytics
+almanx workflows [--min-freq N] Show mined workflow DAGs
+almanx suggest [--num N]        Suggest shell aliases
+almanx add <alias> <command>    Add an alias
+almanx remove <alias>           Remove an alias
+almanx rename <old> <new>       Rename an alias
+almanx list                     List all tracked aliases
+almanx dismiss <command>        Stop tracking a command
+almanx init bash|zsh|fish       Print shell integration snippet
 ```
-
-### Frecency Scoring
-
-| Recency band     | Multiplier |
-|------------------|------------|
-| Used < 1 hour ago    | ×4.0  |
-| Used < 1 day ago     | ×2.0  |
-| Used < 1 week ago    | ×0.5  |
-| Older                | ×0.25 |
-
-`score = multiplier × frequency × command_length^0.6`
-
-Longer commands score higher because they save more typing.
 
 ---
 
-## Commands
-
-| Command | Description |
-|---|---|
-| `almanx` | Open TUI |
-| `almanx suggest [-n N]` | Print top-N alias suggestions |
-| `almanx add <alias> <cmd>` | Add an alias |
-| `almanx remove <alias>` | Remove an alias |
-| `almanx rename <old> <new>` | Rename an alias |
-| `almanx list` | List all tracked aliases |
-| `almanx dismiss <cmd>` | Never suggest this command again |
-| `almanx init bash\|zsh\|fish` | Print shell integration snippet |
-
----
-
-## TUI Keys
+## TUI Keybindings
 
 | Key | Action |
 |---|---|
-| `/` | Search commands |
-| `↑ ↓` | Navigate list |
-| `a` / `Enter` | Add alias for selected command |
-| `d` | Dismiss selected command |
+| `/` | Search/filter commands |
+| `↑ ↓` or `j k` | Navigate |
+| `a` or `Enter` | Add alias for selected command |
+| `d` | Dismiss command |
 | `l` | List all aliases |
-| `q` / `Esc` | Quit |
-
----
-
-## File Layout
-
-```
-~/.almanx/
-├── database.json     # command frequency/timing data
-├── deleted.json      # dismissed commands
-├── config.json       # tracked alias file paths
-└── aliases           # default alias output file
-```
+| `w` | View workflow patterns |
+| `q` | Quit |
 
 ---
 
 ## Architecture
 
 ```
-src/
-├── main.rs              # CLI dispatch
-├── shell.rs             # shell init script generator
-├── cli/
-│   ├── mod.rs
-│   └── args.rs          # clap argument definitions
-├── database/
-│   ├── mod.rs
-│   ├── structs.rs       # Database, Command, DeletedCommands
-│   ├── ops.rs           # record, tombstone, top-N
-│   ├── scoring.rs       # frecency formula + decay
-│   └── persistence.rs   # JSON load/save
-├── ops/
-│   ├── mod.rs
-│   ├── alias_file.rs    # read/write shell alias files
-│   └── suggest.rs       # alias name suggestion engine
-└── tui/
-    ├── mod.rs           # terminal setup + event loop
-    ├── app.rs           # all TUI state
-    ├── events.rs        # keyboard event dispatch
-    └── render.rs        # ratatui drawing code
+~/.almanx/
+├── database.json    # Frecency-scored command index
+├── deleted.json     # Tombstoned (dismissed) commands
+├── events.jsonl     # Append-only event log (full telemetry)
+├── config.json      # User configuration
+└── aliases          # Generated shell alias file
+```
+
+Data flow:
+1. Shell hook calls `almanx record <cmd> --cwd <dir> --exit-code <n> --duration <ms>`
+2. Command goes into `database.json` (frecency scoring) AND `events.jsonl` (raw log)
+3. `almanx search` / `almanx workflows` / `almanx stats` query `events.jsonl`
+4. TUI reads from `database.json` for fast ranked retrieval
+
+---
+
+## Running Tests
+
+```bash
+# Build first
+cargo build --release
+
+# Run integration tests
+bash integration_tests/test_hooks.sh
+
+# Run unit tests
+cargo test
 ```

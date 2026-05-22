@@ -1,62 +1,46 @@
 // ─── tui/app.rs ───────────────────────────────────────────────────────────────
-//
-// All TUI state lives here.  The `App` struct is the single source of truth —
-// the renderer reads from it, the event handler mutates it.
-
 use crate::database::{Database, DeletedCommands, structs::Command};
 use crate::ops::{suggest::AliasSuggestion, AliasSuggester};
+use almanx_workflow_engine::{WorkflowDag, WorkflowEngine};
+use almanx_storage::EventLog;
 use ratatui::widgets::ListState;
-
-// ── Modes ─────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Mode {
-    /// Main view: command list + search box.
     Browse,
-    /// User is typing in the search box.
     Search,
-    /// User pressed Enter on a command — picking an alias name.
     AddAlias { command: String },
-    /// Confirm before writing the alias.
     ConfirmAlias { command: String, alias: String },
-    /// Browsing all tracked aliases.
     ListAliases,
-    /// Show a status popup (success / error message).
+    Workflows,
     Popup { message: String },
 }
 
-// ── App ───────────────────────────────────────────────────────────────────────
-
 pub struct App {
-    // ── Persistence ──────────────────────────────────────────────────────────
     pub db:          Database,
     pub deleted:     DeletedCommands,
     pub alias_file:  String,
     pub alias_files: Vec<String>,
 
-    // ── UI state ─────────────────────────────────────────────────────────────
     pub mode:        Mode,
     pub should_quit: bool,
 
-    /// All commands loaded from DB, refreshed on mode change.
     pub commands:    Vec<Command>,
-    /// Subset of `commands` matching the current search query.
     pub filtered:    Vec<Command>,
     pub list_state:  ListState,
 
-    /// Live search input.
     pub search:      String,
 
-    /// When adding an alias: the text the user is typing for the alias name.
-    pub alias_input: String,
+    pub alias_input:       String,
     pub alias_suggestions: Vec<AliasSuggestion>,
     pub suggestions_state: ListState,
 
-    /// All tracked aliases (shown in ListAliases mode).
     pub aliases:         Vec<(String, String)>,
     pub aliases_state:   ListState,
 
-    /// A one-line status shown at the bottom of the main view.
+    pub workflows:       Vec<WorkflowDag>,
+    pub workflows_state: ListState,
+
     pub status: String,
 }
 
@@ -69,16 +53,9 @@ impl App {
     ) -> Self {
         let mut list_state = ListState::default();
         list_state.select(Some(0));
-        let mut suggestions_state = ListState::default();
-        suggestions_state.select(Some(0));
-        let mut aliases_state = ListState::default();
-        aliases_state.select(Some(0));
 
         App {
-            db,
-            deleted,
-            alias_file,
-            alias_files,
+            db, deleted, alias_file, alias_files,
             mode: Mode::Browse,
             should_quit: false,
             commands: vec![],
@@ -87,22 +64,20 @@ impl App {
             search: String::new(),
             alias_input: String::new(),
             alias_suggestions: vec![],
-            suggestions_state,
+            suggestions_state: { let mut s = ListState::default(); s.select(Some(0)); s },
             aliases: vec![],
-            aliases_state,
-            status: " q=quit  /=search  a=add-alias  l=list  d=dismiss".to_owned(),
+            aliases_state: { let mut s = ListState::default(); s.select(Some(0)); s },
+            workflows: vec![],
+            workflows_state: { let mut s = ListState::default(); s.select(Some(0)); s },
+            status: " q=quit  /=search  a=alias  l=list  w=workflows  d=dismiss".to_owned(),
         }
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
-    /// Reload `commands` from DB and rebuild `filtered`.
     pub fn reload_commands(&mut self) {
-        self.commands = self.db.top(50).into_iter().cloned().collect();
+        self.commands = self.db.top(100).into_iter().cloned().collect();
         self.apply_search();
     }
 
-    /// Filter `commands` by the current search string.
     pub fn apply_search(&mut self) {
         let q = self.search.to_lowercase();
         self.filtered = if q.is_empty() {
@@ -115,7 +90,6 @@ impl App {
                 .collect()
         };
 
-        // Keep selection in-bounds.
         let len = self.filtered.len();
         if len == 0 {
             self.list_state.select(None);
@@ -154,24 +128,42 @@ impl App {
         self.aliases_state.select(Some(prev));
     }
 
+    pub fn scroll_workflows_down(&mut self) {
+        let len = self.workflows.len();
+        if len == 0 { return; }
+        let next = self.workflows_state.selected().unwrap_or(0).saturating_add(1).min(len - 1);
+        self.workflows_state.select(Some(next));
+    }
+
+    pub fn scroll_workflows_up(&mut self) {
+        let prev = self.workflows_state.selected().unwrap_or(0).saturating_sub(1);
+        self.workflows_state.select(Some(prev));
+    }
+
     pub fn load_suggestions_for(&mut self, command: &str) {
         let suggester = AliasSuggester::new(&self.alias_file);
         self.alias_suggestions = suggester.suggest(command);
         let len = self.alias_suggestions.len();
-        if len > 0 {
-            self.suggestions_state.select(Some(0));
-        } else {
-            self.suggestions_state.select(None);
-        }
+        self.suggestions_state.select(if len > 0 { Some(0) } else { None });
     }
 
     pub fn load_aliases(&mut self) {
         self.aliases = crate::ops::alias_file::get_all_aliases(&self.alias_files);
-        if self.aliases.is_empty() {
-            self.aliases_state.select(None);
-        } else {
-            self.aliases_state.select(Some(0));
+        self.aliases_state.select(if self.aliases.is_empty() { None } else { Some(0) });
+    }
+
+    pub fn load_workflows(&mut self) {
+        let log_path = crate::database::persistence::event_log_path();
+        let log = EventLog::new(log_path);
+        if let Ok(events) = log.read_all() {
+            let engine = WorkflowEngine::new(30 * 60 * 1000); // 30 min session
+            self.workflows = engine.mine_workflows(&events);
+            self.workflows = self.workflows.iter()
+                .filter(|w| w.frequency >= 2)
+                .cloned()
+                .collect();
         }
+        self.workflows_state.select(if self.workflows.is_empty() { None } else { Some(0) });
     }
 
     pub fn set_popup(&mut self, msg: impl Into<String>) {
