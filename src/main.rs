@@ -83,6 +83,17 @@ fn run() -> anyhow::Result<()> {
             analytics::show_workflows(min_freq)?;
         }
 
+        // ── Predict next command ──────────────────────────────────────────────
+        Some(Subcommand::Predict { last_cmd }) => {
+            let text = last_cmd.join(" ");
+            analytics::predict_next(&text)?;
+        }
+
+        // ── Suggest for context ───────────────────────────────────────────────
+        Some(Subcommand::Context { cwd }) => {
+            analytics::suggest_context(cwd)?;
+        }
+
         // ── Suggest aliases ───────────────────────────────────────────────────
         Some(Subcommand::Suggest { num }) => {
             let mut db   = load_db();

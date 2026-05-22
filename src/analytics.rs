@@ -9,6 +9,7 @@ use almanx_collector::CommandEvent;
 use almanx_indexer::Indexer;
 use almanx_storage::EventLog;
 use almanx_workflow_engine::WorkflowEngine;
+use almanx_query_engine::{QueryEngine, Context};
 use colored::*;
 use std::collections::HashMap;
 
@@ -230,6 +231,78 @@ pub fn show_workflows(min_freq: u32) -> anyhow::Result<()> {
     println!("  Use {} to create a workflow alias:", "almanx add".cyan().bold());
     println!("  {}", "almanx add gac 'git add . && git commit -m'".dimmed());
 
+    Ok(())
+}
+
+// ── Predictions & Context ─────────────────────────────────────────────────────
+
+pub fn predict_next(last_cmd: &str) -> anyhow::Result<()> {
+    let events = load_events()?;
+    if events.is_empty() {
+        println!("{}", "No command history yet.".yellow());
+        return Ok(());
+    }
+
+    let engine = WorkflowEngine::new(30 * 60 * 1000);
+    let workflows = engine.mine_workflows(&events);
+
+    let query_engine = QueryEngine::new(events, workflows);
+    let predictions = query_engine.predict_next(last_cmd);
+
+    if predictions.is_empty() {
+        println!("{} No predictions found after '{}'", "→".dimmed(), last_cmd.cyan());
+        return Ok(());
+    }
+
+    println!("{}", "── Predicted Next Commands ─────────────────────────────".cyan().bold());
+    for (i, cmd) in predictions.iter().enumerate() {
+        println!("  {}. {}", i + 1, cmd.white().bold());
+    }
+    println!();
+    Ok(())
+}
+
+pub fn suggest_context(cwd_opt: Option<String>) -> anyhow::Result<()> {
+    let events = load_events()?;
+    if events.is_empty() {
+        println!("{}", "No command history yet.".yellow());
+        return Ok(());
+    }
+
+    let engine = WorkflowEngine::new(30 * 60 * 1000);
+    let workflows = engine.mine_workflows(&events);
+    let query_engine = QueryEngine::new(events, workflows);
+
+    let cwd = cwd_opt.unwrap_or_else(|| {
+        std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default()
+    });
+
+    use chrono::Timelike;
+    let now = chrono::Local::now();
+    let hour = now.hour();
+
+    let ctx = Context {
+        cwd: cwd.clone(),
+        time_of_day_hour: hour,
+    };
+
+    let suggestions = query_engine.suggest_for_context(&ctx, 10);
+
+    if suggestions.is_empty() {
+        println!("{} No contextual suggestions found for '{}'", "→".dimmed(), cwd.cyan());
+        return Ok(());
+    }
+
+    println!("{}", "── Contextual Suggestions ──────────────────────────────".cyan().bold());
+    println!("  Directory: {}", shorten_path(&cwd).dimmed());
+    println!("  Time:      {:02}:00", hour);
+    println!();
+    for (i, cmd) in suggestions.iter().enumerate() {
+        println!("  {}. {}", i + 1, cmd.white().bold());
+    }
+    println!();
     Ok(())
 }
 

@@ -86,6 +86,18 @@ pub enum Subcommand {
         command: Vec<String>,
     },
 
+    /// Predict the most likely next commands.
+    Predict {
+        /// The previous command(s) run.
+        last_cmd: Vec<String>,
+    },
+
+    /// Contextual command suggestions based on your environment.
+    Context {
+        /// Optional directory to analyze (defaults to current directory).
+        cwd: Option<String>,
+    },
+
     /// Launch the interactive TUI (default when no subcommand given).
     Tui,
 
