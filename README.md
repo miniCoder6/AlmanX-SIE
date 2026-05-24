@@ -70,13 +70,31 @@ graph TD
 
 ## Installation
 
+### Universal Install Script
+The easiest way to install flux on any system:
+
 ```bash
-git clone https://github.com/you/flux
-cd flux
-chmod +x install.sh && ./install.sh
+curl -sSfL https://raw.githubusercontent.com/ishreyanshkumar/flux/main/install.sh | sh
+```
+This script will automatically detect your system and install the appropriate binary.
+
+Remember to add `~/.local/bin` to your `$PATH` if prompted by the install script, by adding `export PATH="$HOME/.local/bin:$PATH"` in the end of your shell config (`~/.bashrc`, `~/.zshrc`, etc).
+
+### From Cargo
+```bash
+cargo install flux
 ```
 
-### Shell Integration
+### From Source
+```bash
+git clone https://github.com/ishreyanshkumar/flux.git
+cd flux
+cargo install --path .
+```
+
+---
+
+## Shell Integration
 
 **Bash** — add to `~/.bashrc`:
 
@@ -94,6 +112,13 @@ eval "$(flux init zsh)"
 
 ```fish
 flux init fish | source
+```
+
+**PowerShell** — add to your `$PROFILE`:
+
+```powershell
+& "flux" init powershell | Out-File "$env:USERPROFILE\.flux\init.ps1"
+. "$env:USERPROFILE\.flux\init.ps1"
 ```
 
 ---
@@ -569,11 +594,30 @@ Config lives at `~/.flux/config.json`. All fields are optional — Flux uses sen
 
 | Metric                         | Target                        | Implementation                              |
 | ------------------------------ | ----------------------------- | ------------------------------------------- |
-| Shell hook latency             | **< 2ms**                     | Fire-and-forget background process (`&`)    |
-| Search latency (100k commands) | **< 5ms**                     | Radix Trie O(k) prefix + BM25               |
-| Daemon idle RAM                | **< 15MB**                    | Bounded crossbeam channel, no heap bloat    |
+| Shell hook latency             | **Minimal**                   | Fire-and-forget background process (`&`)    |
+| Search latency                 | **Instantaneous**             | Radix Trie O(k) prefix + BM25               |
+| Daemon idle RAM                | **Low footprint**             | Bounded crossbeam channel, no heap bloat    |
 | WAL compaction                 | triggered at `max_wal_events` | Atomic rename, no data loss                 |
 | Score decay                    | automatic                     | Halve frequencies when total_score > 50,000 |
+
+---
+
+## Benchmarks
+
+Flux includes a standard `criterion` benchmark suite to verify its performance targets. You can run the benchmarks yourself on your local machine:
+
+```bash
+cargo bench
+```
+
+### Measured Components
+
+| Component | Operation |
+| :--- | :--- |
+| **Storage** | Ingest 10,000 commands |
+| **Search Engine** | Prefix scan (Radix Trie) over 60k |
+| **Search Engine** | Complex Fuzzy + BM25 search |
+| **Workflow Miner** | Predict next command (Markov Chain) |
 
 ---
 
@@ -655,6 +699,15 @@ flux/
 └── install.sh
 ```
 
+## Uninstall
+
+To uninstall flux, you can run the command:
+
+```bash
+curl -sSfL https://raw.githubusercontent.com/ishreyanshkumar/flux/main/uninstall.sh | sh
+```
+If you installed the software using a package manager, remove it using the package manager's uninstall command.
+
 ---
 
 <div align="center">
@@ -662,3 +715,5 @@ flux/
 Built with ⚡ in Rust · Local-first · Zero telemetry · Sub-millisecond
 
 </div>
+
+---

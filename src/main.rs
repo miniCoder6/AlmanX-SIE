@@ -1,18 +1,10 @@
-mod cli;
-mod config;
-mod miner;
-mod query;
-mod search;
-mod shell;
-mod store;
-mod tui;
-
-use cli::{Cli, Cmd};
+use flux::cli::{Cli, Cmd};
 use clap::Parser;
 use colored::*;
-use config::Config;
-use search::{AliasSuggester, SearchEngine};
-use store::{Aliases, ShellEvent, Store, Wal};
+use flux::config::Config;
+use flux::search::{AliasSuggester, SearchEngine};
+use flux::store::{Aliases, ShellEvent, Store, Wal};
+use flux::{miner, query, shell, tui};
 
 fn main() {
     let cfg = Config::load();
@@ -30,7 +22,8 @@ fn main() {
     if args.len() == 1 { tui::run(&cfg); return; }
 
     let cli = Cli::parse();
-    let aliases = Aliases::new(cfg.alias_file_paths.clone());
+    let alias_paths = cli.alias_file_path.as_ref().map(|p| vec![p.clone()]).unwrap_or(cfg.alias_file_paths.clone());
+    let aliases = Aliases::new(alias_paths);
 
     match cli.cmd {
         None => tui::run(&cfg),
@@ -158,8 +151,8 @@ fn main() {
                 .filter(|r| !r.cwd.is_empty() && r.cwd == target_cwd)
                 .collect();
             results.sort_by(|a, b| {
-                let s_a = a.score + store::context_boost(a, &target_cwd, "");
-                let s_b = b.score + store::context_boost(b, &target_cwd, "");
+                let s_a = a.score + flux::store::context_boost(a, &target_cwd, "");
+                let s_b = b.score + flux::store::context_boost(b, &target_cwd, "");
                 s_b.cmp(&s_a)
             });
             results.truncate(10);

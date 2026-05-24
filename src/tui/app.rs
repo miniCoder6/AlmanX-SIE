@@ -55,6 +55,8 @@ pub struct App {
     pub suggestions: Vec<Suggestion>,
     pub sug_state: ListState,
 
+    pub add_alias_focus_command: bool,
+
     // Confirm dialog
     pub confirm_yes: bool,
 
@@ -80,6 +82,7 @@ impl App {
             alias_store, aliases, alias_state: ListState::default(),
             input: String::new(), alias_input: String::new(),
             suggestions: vec![], sug_state: ListState::default(),
+            add_alias_focus_command: false,
             confirm_yes: true,
             output_lines: vec![], query_input: String::new(),
         }

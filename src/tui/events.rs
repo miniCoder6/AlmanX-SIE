@@ -6,6 +6,7 @@ use crate::tui::app::{Action, App, Mode};
 pub fn handle(app: &mut App) -> Result<()> {
     if !event::poll(Duration::from_millis(50))? { return Ok(()); }
     if let Event::Key(k) = event::read()? {
+        if k.kind != event::KeyEventKind::Press { return Ok(()); }
         match app.mode.clone() {
             Mode::Main           => main_keys(app, k.code),
             Mode::Search         => search_keys(app, k.code),
@@ -37,6 +38,7 @@ fn main_keys(app: &mut App, code: KeyCode) {
                 let cmd = app.input.clone();
                 app.load_suggestions(&cmd);
             }
+            app.add_alias_focus_command = false;
             app.mode = Mode::AddAlias;
         }
         KeyCode::Char('r') => { app.input.clear(); app.mode = Mode::RemoveAlias; }
@@ -71,8 +73,13 @@ fn add_alias_keys(app: &mut App, code: KeyCode) {
     match code {
         KeyCode::Esc       => app.mode = Mode::Main,
         KeyCode::Tab       => { if !app.suggestions.is_empty() { app.mode = Mode::PickSuggestion; } }
-        KeyCode::Backspace => { app.alias_input.pop(); }
-        KeyCode::Char(c)   => { app.alias_input.push(c); }
+        KeyCode::Up | KeyCode::Down => { app.add_alias_focus_command = !app.add_alias_focus_command; }
+        KeyCode::Backspace => {
+            if app.add_alias_focus_command { app.input.pop(); } else { app.alias_input.pop(); }
+        }
+        KeyCode::Char(c)   => {
+            if app.add_alias_focus_command { app.input.push(c); } else { app.alias_input.push(c); }
+        }
         KeyCode::Enter => {
             if app.input.is_empty() || app.alias_input.is_empty() {
                 app.status = "Fill in both command and alias.".into(); return;

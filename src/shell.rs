@@ -24,5 +24,33 @@ test -f "{aliases}"; and source "{aliases}"
         Shell::Posix => format!(r#"# Flux — POSIX. Add to ~/.profile.
 [ -f "{aliases}" ] && . "{aliases}"
 "#),
+        Shell::Powershell => format!(r#"# Flux — PowerShell. Add to $PROFILE: Invoke-Expression (& "{bin}" init powershell | Out-String)
+$global:FluxBin = "{bin}"
+$FluxAliases = "{aliases}"
+
+if (Test-Path $FluxAliases) {{
+    Get-Content $FluxAliases | ForEach-Object {{
+        if ($_ -match '^alias (.*?)=[''"]?(.*?)[''"]?$') {{
+            $a = $Matches[1]; $c = $Matches[2]
+            $sb = [scriptblock]::Create("$c @args")
+            New-Item -Path "Function:global:$a" -Value $sb -Force | Out-Null
+        }}
+    }}
+}}
+
+if (Test-Path Variable:global:prompt) {{ $global:FluxOldPrompt = $global:prompt }}
+else {{ $global:FluxOldPrompt = {{ "PS> " }} }}
+
+function global:prompt {{
+    $last = Get-History -Count 1
+    if ($last) {{
+        $cmd = $last.CommandLine
+        if (![string]::IsNullOrWhiteSpace($cmd)) {{
+            & $global:FluxBin "custom" $cmd *>&1 | Out-Null
+        }}
+    }}
+    return & $global:FluxOldPrompt
+}}
+"#),
     }
 }

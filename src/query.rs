@@ -190,8 +190,6 @@ fn cmp(lhs: f64, op: &Op, rhs: f64) -> bool {
                Op::Eq=>(lhs-rhs).abs()<f64::EPSILON, Op::Neq=>(lhs-rhs).abs()>=f64::EPSILON }
 }
 
-use std::cmp::Reverse;
-
 #[cfg(test)]
 mod tests {
     use super::*;
