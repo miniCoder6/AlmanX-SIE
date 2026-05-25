@@ -46,14 +46,14 @@ Most shell history tools wrap SQLite and call it done. Flux implements primitive
 
 ```mermaid
 graph TD
-    SHELL["🐚 Shell Integration Layer<br/>(Bash · Zsh · Fish · POSIX)"]
-    CORE["flux-core<br/>ShellEvent · FluxConfig · FluxError"]
-    STORAGE["flux-storage<br/>WAL · CommandStore · AliasStore"]
-    DAEMON["flux-daemon<br/>Tokio UDS server · async ingestor"]
-    INDEXER["flux-indexer<br/>Radix Trie · BM25 · Fuzzy · AliasSuggester"]
-    MINER["flux-miner<br/>Session clustering · Workflow DAG · Stats"]
-    QUERY["flux-query<br/>Lexer → AST → Parser → Executor"]
-    TUI["flux-tui<br/>Ratatui TUI · Clap CLI · Shell init scripts"]
+    SHELL["🐚 Shell Integration Layer<br/>(Bash · Zsh · Fish · POSIX · PowerShell)"]
+    CORE["config.rs<br/>Config"]
+    STORAGE["store.rs<br/>WAL · CommandStore · AliasStore · ShellEvent"]
+    DAEMON["daemon.rs<br/>Tokio UDS server · async ingestor"]
+    INDEXER["search.rs<br/>Radix Trie · BM25 · Fuzzy · AliasSuggester"]
+    MINER["miner.rs<br/>Session clustering · Workflow DAG · Stats"]
+    QUERY["query.rs<br/>Lexer → AST → Parser → Executor"]
+    TUI["tui/ & cli.rs<br/>Ratatui TUI · Clap CLI · Shell init scripts"]
 
     SHELL -->|"fire-and-forget (non-blocking)"| CORE
     CORE --> STORAGE
@@ -368,13 +368,13 @@ stateDiagram-v2
     AddAlias --> PickSuggestion: Tab (load suggestions)
     PickSuggestion --> AddAlias: Enter (fill alias field)
     AddAlias --> Confirm_Add: Enter (confirm)
-    Confirm_Add --> Main: y / Enter
-    Confirm_Add --> Main: n / Esc
+    Confirm_Add --> Main: Left/Right + Enter
+    Confirm_Add --> Main: Esc
 
     Main --> RemoveAlias: r
     RemoveAlias --> Confirm_Remove: Enter
-    Confirm_Remove --> Main: y / Enter
-    Confirm_Remove --> Main: n / Esc
+    Confirm_Remove --> Main: Left/Right + Enter
+    Confirm_Remove --> Main: Esc
 
     Main --> ChangeAlias: c
     ChangeAlias --> Main: Enter / Esc
@@ -385,8 +385,14 @@ stateDiagram-v2
     Main --> Stats: t
     Stats --> Main: Esc / q
 
-    Main --> Query: open query mode
+    Main --> Query: Q
     Query --> Main: Esc
+
+    Main --> Predict: p
+    Predict --> Main: Esc / q
+
+    Main --> Context: x
+    Context --> Main: Esc / q
 
     Main --> [*]: q
 ```
@@ -538,7 +544,7 @@ flux remove gs                         Remove an alias
 flux change gs gst "git status --short"
 flux list                              List all aliases
 flux suppress "some long command"      Remove from suggestions
-flux init bash | zsh | fish            Print shell init script
+flux init bash | zsh | fish | posix | powershell Print shell init script
 ```
 
 ---
@@ -557,6 +563,7 @@ flux init bash | zsh | fish            Print shell init script
 | `↓` / `j` | Main      | Navigate down                  |
 | `p`       | Main      | Show workflow predictions      |
 | `x`       | Main      | Filter by local context        |
+| `Q`       | Main      | Open query mode                |
 | `Tab`     | Add Alias | Pick from alias suggestions    |
 | `F5`      | Main      | Refresh command list           |
 | `Esc`     | Any       | Back / cancel                  |
@@ -590,21 +597,9 @@ Config lives at `~/.flux/config.json`. All fields are optional — Flux uses sen
 
 ---
 
-## Performance Targets
-
-| Metric                         | Target                        | Implementation                              |
-| ------------------------------ | ----------------------------- | ------------------------------------------- |
-| Shell hook latency             | **Minimal**                   | Fire-and-forget background process (`&`)    |
-| Search latency                 | **Instantaneous**             | Radix Trie O(k) prefix + BM25               |
-| Daemon idle RAM                | **Low footprint**             | Bounded crossbeam channel, no heap bloat    |
-| WAL compaction                 | triggered at `max_wal_events` | Atomic rename, no data loss                 |
-| Score decay                    | automatic                     | Halve frequencies when total_score > 50,000 |
-
----
-
 ## Benchmarks
 
-Flux includes a standard `criterion` benchmark suite to verify its performance targets. You can run the benchmarks yourself on your local machine:
+Flux includes a standard `criterion` benchmark suite. You can run the benchmarks yourself on your local machine:
 
 ```bash
 cargo bench
@@ -612,12 +607,12 @@ cargo bench
 
 ### Measured Components
 
-| Component | Operation |
-| :--- | :--- |
-| **Storage** | Ingest 10,000 commands |
-| **Search Engine** | Prefix scan (Radix Trie) over 60k |
-| **Search Engine** | Complex Fuzzy + BM25 search |
-| **Workflow Miner** | Predict next command (Markov Chain) |
+| Component | Operation | Time |
+| :--- | :--- | :--- |
+| **Storage** | Ingest 10,000 commands | ~22.7 ms |
+| **Search Engine** | Prefix scan (Radix Trie) over 60k | ~1.36 ms |
+| **Search Engine** | Complex Fuzzy + BM25 search | ~7.40 ms |
+| **Workflow Miner** | Predict next command (Markov Chain) | ~357 ns |
 
 ---
 
@@ -640,12 +635,12 @@ cargo run --bin flux-daemon
 cargo test
 ```
 
-### Crate Dependency Graph
+### Module Dependency Graph
 
 ```mermaid
 graph BT
-    TUI["flux-tui\n(binary: flux)"]
-    DAEMON["flux-daemon\n(binary: flux-daemon)"]
+    TUI["tui/\n(binary: flux)"]
+    DAEMON["daemon.rs\n(binary: flux-daemon)"]
     QUERY["query.rs"]
     SEARCH["search.rs"]
     MINER["miner.rs"]
@@ -679,6 +674,7 @@ graph BT
 flux/
 ├── src/
 │   ├── main.rs          # CLI entry point + subcommand dispatch
+│   ├── lib.rs           # Library entry point
 │   ├── cli.rs           # Clap CLI definitions
 │   ├── config.rs        # Config load/save (~/.flux/config.json)
 │   ├── store.rs         # CommandStore · WAL · AliasStore · frecency

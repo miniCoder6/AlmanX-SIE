@@ -171,7 +171,7 @@ impl Store {
     fn decay(&mut self) {
         let mut to_remove = vec![];
         for (k, rec) in self.index.iter_mut() {
-            rec.frequency = (rec.frequency as f32 * 0.5).round() as i32;
+            rec.frequency /= 2;
             if rec.frequency < 1 { to_remove.push(k.clone()); } else { rec.refresh_score(); }
         }
         for k in to_remove { self.index.remove(&k); }
