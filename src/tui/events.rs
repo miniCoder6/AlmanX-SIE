@@ -19,7 +19,7 @@ pub fn handle(app: &mut App) -> Result<()> {
             }),
             Mode::ChangeAlias    => change_alias_keys(app, k.code),
             Mode::ListAliases    => list_keys(app, k.code),
-            Mode::Stats | Mode::Query => output_keys(app, k.code),
+            Mode::Stats | Mode::Query | Mode::Predict | Mode::Context => output_keys(app, k.code),
             Mode::Confirm(_)     => confirm_keys(app, k.code),
         }
     }
@@ -43,6 +43,8 @@ fn main_keys(app: &mut App, code: KeyCode) {
         KeyCode::Char('c') => { app.input.clear(); app.mode = Mode::ChangeAlias; }
         KeyCode::Char('l') => { app.reload_aliases(); app.mode = Mode::ListAliases; }
         KeyCode::Char('t') => { app.compute_stats(); app.mode = Mode::Stats; }
+        KeyCode::Char('p') => { app.run_predict(); app.mode = Mode::Predict; }
+        KeyCode::Char('x') => { app.run_context(); app.mode = Mode::Context; }
         KeyCode::Char('Q') => { app.query_input.clear(); app.output_lines.clear(); app.mode = Mode::Query; }
         KeyCode::Down | KeyCode::Char('j') => { let n = app.visible.len(); app.nav_down(n); }
         KeyCode::Up   | KeyCode::Char('k') => app.nav_up(),

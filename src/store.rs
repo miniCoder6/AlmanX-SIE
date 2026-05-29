@@ -22,10 +22,18 @@ pub fn frecency(last_access: i64, frequency: i32, char_len: i32) -> i32 {
     (mult * (char_len as f64).powf(0.6) * frequency as f64) as i32
 }
 
-pub fn context_boost(rec_cwd: &str, rec_branch: &str, cwd: &str, branch: &str) -> i32 {
+pub fn context_boost(rec: &Record, cwd: &str, branch: &str) -> i32 {
     let mut n = 0;
-    if !rec_cwd.is_empty() && rec_cwd == cwd { n += 30; }
-    if !rec_branch.is_empty() && rec_branch == branch { n += 20; }
+    if !rec.cwd.is_empty() && rec.cwd == cwd { n += 30; }
+    if !rec.git_branch.is_empty() && rec.git_branch == branch { n += 20; }
+    let current_hour = ((now() % 86400) / 3600) as usize;
+    if rec.hours[current_hour] > 0 {
+        let total_for_cmd: u32 = rec.hours.iter().map(|&x| x as u32).sum();
+        if total_for_cmd > 0 {
+            let ratio = rec.hours[current_hour] as f64 / total_for_cmd as f64;
+            n += (ratio * 25.0) as i32;
+        }
+    }
     n
 }
 
@@ -63,16 +71,25 @@ pub struct Record {
     pub score: i32,
     pub cwd: String,
     pub git_branch: String,
+    #[serde(default = "default_hours")]
+    pub hours: [u16; 24],
+}
+
+fn default_hours() -> [u16; 24] {
+    [0; 24]
 }
 
 impl Record {
     fn new(text: &str, ts: i64, cwd: &str, branch: &str) -> Self {
         let char_len = text.split_whitespace().map(|t| t.len()).sum::<usize>() as i32;
         let token_count = text.split_whitespace().count() as i32;
+        let mut hours = default_hours();
+        hours[((ts % 86400) / 3600) as usize] += 1;
         Record {
             command: text.to_string(), frequency: 1, last_access: ts,
             char_len, token_count, score: frecency(ts, 1, char_len),
             cwd: cwd.to_string(), git_branch: branch.to_string(),
+            hours,
         }
     }
 
@@ -80,6 +97,8 @@ impl Record {
         self.frequency += 1; self.last_access = ts;
         self.cwd = cwd.to_string(); self.git_branch = branch.to_string();
         self.score = frecency(ts, self.frequency, self.char_len);
+        let hour = ((ts % 86400) / 3600) as usize;
+        self.hours[hour] = self.hours[hour].saturating_add(1);
     }
 
     pub fn refresh_score(&mut self) {

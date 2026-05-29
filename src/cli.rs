@@ -29,6 +29,10 @@ pub enum Cmd {
     Suppress { command: String },
     /// Launch interactive TUI
     Tui,
+    /// Predict the next commands you are likely to run
+    Predict { command: String },
+    /// Contextual command suggestions based on current environment
+    Context { cwd: Option<String> },
     #[clap(hide = true)]
     Init { #[clap(arg_enum)] shell: Shell },
 }

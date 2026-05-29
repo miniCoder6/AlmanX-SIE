@@ -288,7 +288,7 @@ SELECT * COMMANDS WHERE command = "git" LIMIT 10
 
 ## Workflow Mining
 
-### Session Clustering & DAG Construction
+### Session Clustering & N-Gram Subsumption
 
 ```mermaid
 flowchart TD
@@ -297,18 +297,15 @@ flowchart TD
     SESS --> S2[Session 2\nevent list]
     SESS --> SN[Session N…]
 
-    S1 --> WIN[Sliding window size=2\ncommand pairs]
+    S1 --> WIN[N-Gram Extraction\nLengths 2 to 4]
     S2 --> WIN
     SN --> WIN
 
-    WIN --> DAG[WorkflowDag::ingest\nadj: cmd → HashMap cmd → count]
+    WIN --> COUNT[Frequency count]
+    COUNT --> SUBSUME[Subsumption Engine\nPrune shorter sub-sequences]
+    SUBSUME --> OUT([Filtered Workflows])
 
-    DAG --> PRED[predict current_cmd n\ncompute transition probabilities]
-    PRED --> PROB[Sort by P = count / total\nreturn top-n]
-    PROB --> OUT([Next command predictions])
-
-    style DAG fill:#6366f1,color:#fff
-    style PRED fill:#8b5cf6,color:#fff
+    style SUBSUME fill:#6366f1,color:#fff
 ```
 
 ### Markov Chain Transition Model
@@ -489,10 +486,12 @@ flowchart TD
     FORMULA --> BOOST{Context\nboost?}
     BOOST -->|cwd matches| CWD["+30 points"]
     BOOST -->|git branch matches| BRANCH["+20 points"]
+    BOOST -->|time of day match| TIME["Up to +25 points"]
     BOOST -->|neither| PLAIN["+0"]
 
     CWD --> FINAL([Final score])
     BRANCH --> FINAL
+    TIME --> FINAL
     PLAIN --> FINAL
 ```
 
@@ -505,6 +504,8 @@ flux                                   Launch interactive TUI
 flux suggest -n 10                     Top 10 alias suggestions
 flux search "git commit"               Fuzzy search command history
 flux search "docker" -l 5              Search with result limit
+flux predict "git add ."               Predict the next command sequence
+flux context                           Get context-aware commands for your current directory
 flux stats                             Workflow analytics & keystroke savings
 flux query "SELECT * COMMANDS WHERE frequency > 5 LIMIT 10"
 flux add gs -c "git status"            Add an alias
@@ -529,6 +530,8 @@ flux init bash | zsh | fish            Print shell init script
 | `t`       | Main      | Workflow stats                 |
 | `↑` / `k` | Main      | Navigate up                    |
 | `↓` / `j` | Main      | Navigate down                  |
+| `p`       | Main      | Show workflow predictions      |
+| `x`       | Main      | Filter by local context        |
 | `Tab`     | Add Alias | Pick from alias suggestions    |
 | `F5`      | Main      | Refresh command list           |
 | `Esc`     | Any       | Back / cancel                  |
@@ -644,17 +647,7 @@ flux/
 │       ├── mod.rs       # TUI entry point
 │       ├── app.rs       # App state machine
 │       ├── events.rs    # Crossterm event handling
-│       └── ui/
-│           ├── mod.rs
-│           ├── main_view.rs
-│           ├── search_view.rs
-│           ├── add_alias_view.rs
-│           ├── remove_alias_view.rs
-│           ├── change_alias_view.rs
-│           ├── list_aliases_view.rs
-│           ├── pick_suggestion_view.rs
-│           ├── confirm_view.rs
-│           └── output_view.rs
+│       └── ui.rs        # Rendering logic for all views
 ├── vendor/
 │   └── unicode-segmentation/   # vendored dependency
 ├── Cargo.toml

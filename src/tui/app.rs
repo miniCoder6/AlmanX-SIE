@@ -14,6 +14,8 @@ pub enum Mode {
     ListAliases,
     Stats,
     Query,
+    Predict,
+    Context,
     Confirm(Action),
 }
 
@@ -167,6 +169,61 @@ impl App {
                 else { rows.iter().map(|r| format!("  {} (freq={}, score={})", r.command, r.frequency, r.score)).collect() }
             }
         };
+    }
+
+    pub fn run_predict(&mut self) {
+        if let Some(rec) = self.selected_command() {
+            let cmd = rec.command.clone();
+            let mut events = vec![];
+            if let Some(wal) = crate::store::Wal::open(&self.cfg.wal_path(), self.cfg.max_wal_events) {
+                wal.replay(|ev| events.push(ev));
+            }
+            let sessions = crate::miner::sessionize(&events, 1800);
+            let mut dag = crate::miner::WorkflowDag::new();
+            dag.ingest(&sessions);
+            let preds = dag.predict(&cmd, 5);
+            
+            self.output_lines.clear();
+            if preds.is_empty() {
+                self.output_lines.push(format!("No predictions after '{}'.", cmd));
+            } else {
+                self.output_lines.push(format!("Predictions after '{}':", cmd));
+                self.output_lines.push(String::new());
+                for (p_cmd, prob) in preds {
+                    self.output_lines.push(format!("  {:<25}: {:.0}%", p_cmd, prob * 100.0));
+                }
+            }
+            let workflows = crate::miner::mine_workflows(&sessions, 2);
+            self.output_lines.push(String::new());
+            self.output_lines.push("── Top Mined Workflows ─────────────────────────────────".into());
+            for (wf, count) in workflows.iter().take(5) {
+                self.output_lines.push(format!("  ×{:<4} {}", count, wf.join(" ➔ ")));
+            }
+        }
+    }
+
+    pub fn run_context(&mut self) {
+        let target_cwd = std::env::current_dir().unwrap_or_default().to_string_lossy().to_string();
+        let mut results: Vec<_> = self.commands.iter()
+            .filter(|r| !r.cwd.is_empty() && r.cwd == target_cwd)
+            .collect();
+        results.sort_by(|a, b| {
+            let s_a = a.score + crate::store::context_boost(a, &target_cwd, "");
+            let s_b = b.score + crate::store::context_boost(b, &target_cwd, "");
+            s_b.cmp(&s_a)
+        });
+        results.truncate(15);
+        
+        self.output_lines.clear();
+        if results.is_empty() {
+            self.output_lines.push(format!("No context suggestions for '{}'.", target_cwd));
+        } else {
+            self.output_lines.push(format!("Context for '{}':", target_cwd));
+            self.output_lines.push(String::new());
+            for r in results {
+                self.output_lines.push(format!("  {:<25}: score={}", r.command, r.score));
+            }
+        }
     }
 }
 

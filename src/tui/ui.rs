@@ -155,19 +155,16 @@ fn render_add_alias(f: &mut Frame, app: &App, area: Rect) {
         .constraints([Constraint::Length(3), Constraint::Length(3), Constraint::Min(3), Constraint::Length(1)])
         .split(area);
 
-    let cmd_color = if app.add_alias_focus_command { ACCENT } else { DIM };
-    let alias_color = if !app.add_alias_focus_command { ACCENT } else { DIM };
-
     f.render_widget(
         Paragraph::new(app.input.as_str())
             .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)
-                .title(Span::styled(" Command ", Style::default().fg(cmd_color).add_modifier(Modifier::BOLD)))),
+                .title(Span::styled(" Command ", Style::default().fg(ACCENT)))),
         chunks[0],
     );
     f.render_widget(
         Paragraph::new(app.alias_input.as_str())
             .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)
-                .title(Span::styled(" Alias  (Tab → suggestions) ", Style::default().fg(alias_color).add_modifier(Modifier::BOLD)))),
+                .title(Span::styled(" Alias  (Tab → suggestions) ", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)))),
         chunks[1],
     );
 
@@ -178,7 +175,7 @@ fn render_add_alias(f: &mut Frame, app: &App, area: Rect) {
         ]))
     ).collect();
     f.render_widget(List::new(items).block(block("Suggestions")), chunks[2]);
-    f.render_widget(status("Type  •  ↑↓ switch boxes  •  Tab pick  •  Enter confirm  •  Esc back"), chunks[3]);
+    f.render_widget(status("Type alias  •  Tab pick  •  Enter confirm  •  Esc back"), chunks[3]);
 }
 
 // --- pick_suggestion_view.rs ---
