@@ -1,210 +1,187 @@
-// ─── main.rs ──────────────────────────────────────────────────────────────────
-//
-// AlmanX — shell intelligence engine
-//
-// Architecture:
-//   database/   — in-memory command store, scoring, persistence
-//   ops/        — alias file I/O, alias suggestion engine
-//   cli/        — clap argument definitions
-//   tui/        — ratatui interactive TUI
-//   shell.rs    — shell init script generator
-//   analytics.rs— stats and workflow display
-
-mod analytics;
-mod cli;
-mod database;
-mod ops;
-mod shell;
-mod tui;
-
+use flux::cli::{Cli, Cmd};
 use clap::Parser;
-use cli::{Cli, Shell, Subcommand};
 use colored::*;
-use database::persistence::{
-    ensure_data_dir, load_config, load_db, load_deleted, save_db, save_deleted,
-};
-use ops::alias_file::{add_alias_to_files, get_all_aliases, remove_alias_from_files};
-use shell::{init_script, ShellContext};
+use flux::config::Config;
+use flux::search::{AliasSuggester, SearchEngine};
+use flux::store::{Aliases, ShellEvent, Store, Wal};
+use flux::{miner, query, shell, tui};
 
 fn main() {
-    if let Err(e) = run() {
-        eprintln!("{}", format!("error: {}", e).red());
-        std::process::exit(1);
-    }
-}
+    let cfg = Config::load();
+    cfg.ensure_dirs();
 
-fn run() -> anyhow::Result<()> {
-    ensure_data_dir()?;
+    let args: Vec<String> = std::env::args().collect();
+
+    // Fast path for shell hook
+    if args.get(1).map(|s| s == "custom").unwrap_or(false) {
+        let cmd = args[2..].join(" ");
+        if !cmd.trim().is_empty() { ingest(&cfg, &cmd); }
+        return;
+    }
+
+    if args.len() == 1 { tui::run(&cfg); return; }
 
     let cli = Cli::parse();
-    let config = load_config();
-    let alias_files = config.alias_files.clone();
-    let primary_alias_file = alias_files
-        .first()
-        .cloned()
-        .unwrap_or_else(database::persistence::default_alias_path);
+    let alias_paths = cli.alias_file_path.as_ref().map(|p| vec![p.clone()]).unwrap_or(cfg.alias_file_paths.clone());
+    let aliases = Aliases::new(alias_paths);
 
-    match cli.subcommand {
-        // ── No subcommand → launch TUI ────────────────────────────────────────
-        None | Some(Subcommand::Tui) => {
-            tui::run(primary_alias_file, alias_files)?;
+    match cli.cmd {
+        None => tui::run(&cfg),
+
+        Some(Cmd::Init { shell }) => print!("{}", shell::init_script(&shell, &cfg)),
+
+        Some(Cmd::Add { alias, command }) => {
+            aliases.add(&alias, &command);
+            let mut store = load_store(&cfg);
+            store.delete(&command);
+            store.save(&cfg.store_path());
+            println!("{}", format!("Added: {} = '{}'", alias, command).green());
         }
 
-        // ── Record a shell command (called by shell hooks) ────────────────────
-        Some(Subcommand::Record { command, cwd, exit_code, duration }) => {
-            let text = command.join(" ");
-            if text.is_empty() {
-                return Ok(());
+        Some(Cmd::Remove { alias }) => {
+            aliases.remove(&alias);
+            println!("{}", format!("Removed: {}", alias).yellow());
+        }
+
+        Some(Cmd::Change { old_alias, new_alias, command }) => {
+            aliases.change(&old_alias, &new_alias, &command);
+            println!("{}", format!("Changed: {} → {} = '{}'", old_alias, new_alias, command).green());
+        }
+
+        Some(Cmd::List) => {
+            let all = aliases.all();
+            if all.is_empty() { println!("{}", "No aliases.".yellow()); return; }
+            let wa = all.iter().map(|(a,_)| a.len()).max().unwrap_or(5);
+            println!("{}", format!("  {:<wa$}  COMMAND", "ALIAS").cyan().bold());
+            println!("{}", format!("  {:-<wa$}  -------", "").dimmed());
+            for (a, c) in &all { println!("  {:<wa$}  {}", a.cyan(), c); }
+            println!("{}", format!("\n  {} alias(es)", all.len()).dimmed());
+        }
+
+        Some(Cmd::Suggest { num }) => {
+            let store = load_store(&cfg);
+            let aliased_cmds: Vec<String> = aliases.all().into_iter().map(|(_,c)| c).collect();
+            let alias_names: Vec<String>  = aliases.all().into_iter().map(|(a,_)| a).collect();
+            let suggester = AliasSuggester::new(alias_names);
+            let top: Vec<_> = store.all_sorted().into_iter()
+                .filter(|r| !aliased_cmds.contains(&r.command))
+                .take(num.unwrap_or(5)).collect();
+            if top.is_empty() { println!("{}", "No suggestions yet.".yellow()); return; }
+            let wc = top.iter().map(|r| r.command.len()).max().unwrap_or(7);
+            println!("{}", format!("  {:<wc$}  {:<14}  SCORE", "COMMAND", "ALIAS").cyan().bold());
+            println!("{}", format!("  {:-<wc$}  {:-<14}  -----", "", "").dimmed());
+            for rec in &top {
+                let alias = suggester.suggest(&rec.command).into_iter().next().map(|s| s.alias).unwrap_or_else(|| "—".into());
+                println!("  {:<wc$}  {:<14}  {}", rec.command.bold(), alias.cyan(), rec.score);
             }
-            let mut db      = load_db();
-            let mut deleted = load_deleted();
-            db.record(text.clone(), &deleted);
-            save_db(&db)?;
-
-            // Also append to the event log for workflow mining and search.
-            let storage_path = database::persistence::event_log_path();
-            let log = almanx_storage::EventLog::new(storage_path);
-            let event = almanx_collector::CommandEvent::new(text, cwd, exit_code, duration);
-            let _ = log.append(&event);
         }
 
-        // ── Search command history ────────────────────────────────────────────
-        Some(Subcommand::Search { query, limit }) => {
-            analytics::search_commands(&query, limit)?;
-        }
-
-        // ── Show stats ────────────────────────────────────────────────────────
-        Some(Subcommand::Stats) => {
-            analytics::show_stats()?;
-        }
-
-        // ── Show workflow patterns ────────────────────────────────────────────
-        Some(Subcommand::Workflows { min_freq }) => {
-            analytics::show_workflows(min_freq)?;
-        }
-
-        // ── Predict next command ──────────────────────────────────────────────
-        Some(Subcommand::Predict { last_cmd }) => {
-            let text = last_cmd.join(" ");
-            analytics::predict_next(&text)?;
-        }
-
-        // ── Suggest for context ───────────────────────────────────────────────
-        Some(Subcommand::Context { cwd }) => {
-            analytics::suggest_context(cwd)?;
-        }
-
-        // ── Suggest aliases ───────────────────────────────────────────────────
-        Some(Subcommand::Suggest { num }) => {
-            let mut db   = load_db();
-            let _deleted = load_deleted();
-            let suggester = ops::AliasSuggester::new(&primary_alias_file);
-            let commands  = db.top(num);
-
-            if commands.is_empty() {
-                println!("{}", "No commands tracked yet. Use your shell for a while first.".yellow());
-                return Ok(());
+        Some(Cmd::Search { query, limit }) => {
+            let store = load_store(&cfg);
+            let mut engine = SearchEngine::new(&cfg);
+            for rec in store.all_sorted() { engine.index(rec); }
+            let results = engine.search(&query, limit.unwrap_or(20));
+            if results.is_empty() { println!("{}", "No results.".yellow()); return; }
+            println!("{}", format!("'{}' — {} result(s):", query, results.len()).cyan());
+            for (i, r) in results.iter().enumerate() {
+                println!("  {:>2}. {} {}", i+1, r.command.bold(), format!("({})", r.score as i64).dimmed());
             }
+        }
 
-            let w_cmd   = commands.iter().map(|c| c.text.len()).max().unwrap_or(7).max(7);
-            let w_alias = 12usize;
-            let w_why   = 35usize;
-
-            println!(
-                "{} {} {}",
-                format!("{:<w$}", "COMMAND",  w = w_cmd).cyan().bold(),
-                format!("{:<w$}", "ALIAS",    w = w_alias).cyan().bold(),
-                format!("{:<w$}", "REASON",   w = w_why).cyan().bold(),
-            );
-            println!("{}", "─".repeat(w_cmd + w_alias + w_why + 2).dimmed());
-
-            for cmd in commands {
-                let suggestions = suggester.suggest(&cmd.text);
-                if let Some(best) = suggestions.first() {
-                    println!(
-                        "{} {} {}",
-                        format!("{:<w$}", cmd.text,      w = w_cmd),
-                        format!("{:<w$}", best.alias,    w = w_alias).cyan(),
-                        format!("{:<w$}", best.reason,   w = w_why).dimmed(),
-                    );
-                } else {
-                    println!(
-                        "{} {} {}",
-                        format!("{:<w$}", cmd.text, w = w_cmd),
-                        format!("{:<w$}", "—",      w = w_alias).dimmed(),
-                        format!("{:<w$}", "no conflict-free suggestion", w = w_why).dimmed(),
-                    );
+        Some(Cmd::Stats) => {
+            let store = load_store(&cfg);
+            let aliased: Vec<String> = aliases.all().into_iter().map(|(_,c)| c).collect();
+            let s = miner::compute_stats(&store.all_sorted(), &aliased);
+            println!("{}", "  Flux Stats".cyan().bold());
+            println!("  Total commands    {}", s.total_commands.to_string().yellow());
+            println!("  Unique commands   {}", s.unique_commands.to_string().yellow());
+            println!("  Total keystrokes  {}", s.total_keystrokes.to_string().yellow());
+            println!("  Keystroke savings {}", s.potential_savings.to_string().green());
+            if !s.top_candidates.is_empty() {
+                println!("\n{}", "  Top candidates:".cyan());
+                for (cmd, freq, saving) in &s.top_candidates {
+                    println!("  ×{:<3} {}  ({} saved)", freq, cmd.bold(), saving.to_string().green());
                 }
             }
         }
 
-        // ── Add alias ─────────────────────────────────────────────────────────
-        Some(Subcommand::Add { alias, command }) => {
-            let command_str = command.join(" ");
-            add_alias_to_files(&alias_files, &alias, &command_str);
-            println!(
-                "{} alias {}='{}'",
-                "Added:".green().bold(),
-                alias.cyan(),
-                command_str
-            );
+        Some(Cmd::Query { sql }) => {
+            let store = load_store(&cfg);
+            match query::parse(&sql) {
+                Err(e) => println!("{}", format!("Error: {}", e).red()),
+                Ok(q) => {
+                    let rows = query::execute(&q, &store.all_sorted());
+                    if rows.is_empty() { println!("{}", "No results.".yellow()); return; }
+                    println!("{}", format!("{} row(s):", rows.len()).cyan());
+                    for r in &rows { println!("  {} (freq={}, score={})", r.command.bold(), r.frequency, r.score); }
+                }
+            }
         }
 
-        // ── Remove alias ──────────────────────────────────────────────────────
-        Some(Subcommand::Remove { alias }) => {
-            remove_alias_from_files(&alias_files, &alias);
-            println!("{} {}", "Removed alias:".yellow().bold(), alias.cyan());
+        Some(Cmd::Suppress { command }) => {
+            let mut store = load_store(&cfg);
+            store.delete(&command);
+            store.save(&cfg.store_path());
+            println!("{}", format!("Suppressed: {}", command).yellow());
         }
 
-        // ── Rename alias ──────────────────────────────────────────────────────
-        Some(Subcommand::Rename { old, new }) => {
-            let all = get_all_aliases(&alias_files);
-            if let Some((_, cmd)) = all.into_iter().find(|(a, _)| a == &old) {
-                remove_alias_from_files(&alias_files, &old);
-                add_alias_to_files(&alias_files, &new, &cmd);
-                println!(
-                    "{} {} → {}",
-                    "Renamed:".green().bold(),
-                    old.cyan(),
-                    new.cyan()
-                );
+        Some(Cmd::Predict { command }) => {
+            let mut events = vec![];
+            if let Some(wal) = Wal::open(&cfg.wal_path(), cfg.max_wal_events) {
+                wal.replay(|ev| events.push(ev));
+            }
+            let sessions = miner::sessionize(&events, 1800);
+            let mut dag = miner::WorkflowDag::new();
+            dag.ingest(&sessions);
+            let preds = dag.predict(&command, 5);
+            if preds.is_empty() {
+                println!("{}", "No predictions found.".yellow());
             } else {
-                eprintln!("{} '{}' not found", "error:".red().bold(), old);
+                println!("{}", format!("Predictions after '{}':", command).cyan());
+                for (cmd, prob) in preds {
+                    println!("  {:<20} ({:.0}%)", cmd.bold(), prob * 100.0);
+                }
             }
         }
 
-        // ── List aliases ──────────────────────────────────────────────────────
-        Some(Subcommand::List) => {
-            let aliases = get_all_aliases(&alias_files);
-            if aliases.is_empty() {
-                println!("{}", "No aliases tracked yet.".yellow());
-                return Ok(());
-            }
-            let w = aliases.iter().map(|(a, _)| a.len()).max().unwrap_or(5).max(5);
-            println!("{} {}", format!("{:<w$}", "ALIAS", w = w).cyan().bold(), "COMMAND".cyan().bold());
-            println!("{}", "─".repeat(w + 4 + 40).dimmed());
-            for (alias, cmd) in &aliases {
-                println!("{} {}", format!("{:<w$}", alias, w = w).cyan(), cmd);
+        Some(Cmd::Context { cwd }) => {
+            let store = load_store(&cfg);
+            let target_cwd = cwd.unwrap_or_else(|| std::env::current_dir().unwrap_or_default().to_string_lossy().to_string());
+            let mut results: Vec<_> = store.all_sorted().into_iter()
+                .filter(|r| !r.cwd.is_empty() && r.cwd == target_cwd)
+                .collect();
+            results.sort_by(|a, b| {
+                let s_a = a.score + flux::store::context_boost(a, &target_cwd, "");
+                let s_b = b.score + flux::store::context_boost(b, &target_cwd, "");
+                s_b.cmp(&s_a)
+            });
+            results.truncate(10);
+            if results.is_empty() {
+                println!("{}", "No context suggestions found.".yellow());
+            } else {
+                println!("{}", format!("Context for '{}':", target_cwd).cyan());
+                for r in results {
+                    println!("  {:<20} (freq={}, score={})", r.command.bold(), r.frequency, r.score);
+                }
             }
         }
 
-        // ── Dismiss a command ─────────────────────────────────────────────────
-        Some(Subcommand::Dismiss { command }) => {
-            let text = command.join(" ");
-            let mut db      = load_db();
-            let mut deleted = load_deleted();
-            db.tombstone(&text, &mut deleted);
-            save_db(&db)?;
-            save_deleted(&deleted)?;
-            println!("{} {}", "Dismissed:".yellow().bold(), text);
-        }
-
-        // ── Print shell init snippet ──────────────────────────────────────────
-        Some(Subcommand::Init { shell }) => {
-            let ctx = ShellContext::load(&primary_alias_file);
-            print!("{}", init_script(&shell, &ctx));
-        }
+        Some(Cmd::Tui) => tui::run(&cfg),
     }
+}
 
-    Ok(())
+fn ingest(cfg: &Config, command: &str) {
+    let mut store = Store::load(&cfg.store_path());
+    let ev = ShellEvent::new(command);
+    store.ingest(&ev);
+    if let Some(mut wal) = Wal::open(&cfg.wal_path(), cfg.max_wal_events) { wal.append(&ev); }
+    store.save(&cfg.store_path());
+}
+
+fn load_store(cfg: &Config) -> Store {
+    let mut store = Store::load(&cfg.store_path());
+    if store.index.is_empty() {
+        if let Some(wal) = Wal::open(&cfg.wal_path(), cfg.max_wal_events) { wal.replay(|ev| store.ingest(&ev)); }
+    }
+    store
 }

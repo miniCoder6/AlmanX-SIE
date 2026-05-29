@@ -1,62 +1,24 @@
 #!/usr/bin/env bash
-# ─── AlmanX Install Script ────────────────────────────────────────────────────
-set -euo pipefail
+set -e
 
-BINARY="almanx"
+echo "Building Flux..."
+cargo build --release -p flux-tui
+
 INSTALL_DIR="${HOME}/.local/bin"
-
-echo ""
-echo "┌─────────────────────────────────────┐"
-echo "│  AlmanX — Shell Intelligence Engine │"
-echo "│  Installation Script                │"
-echo "└─────────────────────────────────────┘"
-echo ""
-
-# Check for Rust
-if ! command -v cargo &>/dev/null; then
-    echo "ERROR: Rust not found. Install from https://rustup.rs"
-    exit 1
-fi
-
-echo "→ Building in release mode (this takes ~30s on first build)..."
-cargo build --release
-
 mkdir -p "$INSTALL_DIR"
-cp "target/release/$BINARY" "$INSTALL_DIR/$BINARY"
-chmod +x "$INSTALL_DIR/$BINARY"
+cp target/release/flux "$INSTALL_DIR/flux"
+echo "Installed flux to $INSTALL_DIR/flux"
 
 echo ""
-echo "✓ Installed to: $INSTALL_DIR/$BINARY"
+echo "Add shell integration — choose your shell:"
 echo ""
-
-# Warn if not in PATH
-if ! echo "$PATH" | grep -q "$INSTALL_DIR"; then
-    echo "⚠  Add to your shell config:"
-    echo "   export PATH=\"\$HOME/.local/bin:\$PATH\""
-    echo ""
-fi
-
-echo "── Shell Integration ─────────────────────────────────────────────────"
+echo "  Bash:  Add to ~/.bashrc:"
+echo '    eval "$(flux init bash)"'
 echo ""
-echo "  Add ONE of the following to your shell config, then reload:"
+echo "  Zsh:   Add to ~/.zshrc:"
+echo '    eval "$(flux init zsh)"'
 echo ""
-echo "  # Bash (~/.bashrc)"
-echo '  eval "$(almanx init bash)"'
+echo "  Fish:  Add to ~/.config/fish/config.fish:"
+echo '    flux init fish | source'
 echo ""
-echo "  # Zsh (~/.zshrc)"
-echo '  eval "$(almanx init zsh)"'
-echo ""
-echo "  # Fish (~/.config/fish/config.fish)"
-echo "  almanx init fish | source"
-echo ""
-echo "── Quick Start After Setup ───────────────────────────────────────────"
-echo ""
-echo "  almanx              — open interactive TUI"
-echo "  almanx suggest      — get alias suggestions"
-echo "  almanx stats        — productivity analytics"
-echo "  almanx search <q>   — fuzzy search history"
-echo "  almanx workflows    — view mined workflows"
-echo ""
-echo "  Seed test data:  bash integration_tests/seed_data.sh"
-echo "  Run tests:       bash integration_tests/test_hooks.sh"
-echo ""
+echo "Done! Restart your shell or source your rc file."

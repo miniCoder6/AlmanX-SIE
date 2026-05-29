@@ -1,55 +1,26 @@
-// ─── tui/mod.rs ───────────────────────────────────────────────────────────────
 pub mod app;
 pub mod events;
-pub mod render;
+pub mod ui;
 
-use crate::database::persistence;
 use app::App;
-use crossterm::{
-    event::{self, Event},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
+use crossterm::{execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}};
+use crate::config::Config;
 use ratatui::{backend::CrosstermBackend, Terminal};
-use std::io;
 
-pub fn run(alias_file: String, alias_files: Vec<String>) -> anyhow::Result<()> {
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+pub fn run(cfg: &Config) {
+    enable_raw_mode().expect("enable raw mode");
+    let mut stdout = std::io::stdout();
+    execute!(stdout, EnterAlternateScreen).unwrap();
+    let mut terminal = Terminal::new(CrosstermBackend::new(stdout)).unwrap();
 
-    let db      = persistence::load_db();
-    let deleted = persistence::load_deleted();
-    let mut app = App::new(db, deleted, alias_file, alias_files);
-    app.reload_commands();
-
-    let result = event_loop(&mut terminal, &mut app);
-
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
-
-    result
-}
-
-fn event_loop<B: ratatui::backend::Backend>(
-    terminal: &mut Terminal<B>,
-    app: &mut App,
-) -> anyhow::Result<()> {
+    let mut app = App::new(cfg);
     loop {
-        terminal.draw(|f| render::draw(f, app))?;
-
-        if let Event::Key(key) = event::read()? {
-            events::handle(app, key.code, key.modifiers);
-        }
-
-        if app.should_quit {
-            let _ = persistence::save_db(&app.db);
-            let _ = persistence::save_deleted(&app.deleted);
-            break;
-        }
+        terminal.draw(|f| ui::draw(f, &app)).unwrap();
+        events::handle(&mut app).unwrap();
+        if app.quit { break; }
     }
-    Ok(())
+
+    disable_raw_mode().unwrap();
+    execute!(terminal.backend_mut(), LeaveAlternateScreen).unwrap();
+    terminal.show_cursor().unwrap();
 }
