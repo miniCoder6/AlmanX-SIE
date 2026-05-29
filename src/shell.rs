@@ -38,7 +38,7 @@ if (Test-Path $FluxAliases) {{
     }}
 }}
 
-if (Test-Path Variable:global:prompt) {{ $global:FluxOldPrompt = $global:prompt }}
+if (Test-Path Function:prompt) {{ $global:FluxOldPrompt = $function:prompt }}
 else {{ $global:FluxOldPrompt = {{ "PS> " }} }}
 
 function global:prompt {{
