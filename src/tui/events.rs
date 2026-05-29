@@ -6,7 +6,6 @@ use crate::tui::app::{Action, App, Mode};
 pub fn handle(app: &mut App) -> Result<()> {
     if !event::poll(Duration::from_millis(50))? { return Ok(()); }
     if let Event::Key(k) = event::read()? {
-        if k.kind != event::KeyEventKind::Press { return Ok(()); }
         match app.mode.clone() {
             Mode::Main           => main_keys(app, k.code),
             Mode::Search         => search_keys(app, k.code),
@@ -20,7 +19,7 @@ pub fn handle(app: &mut App) -> Result<()> {
             }),
             Mode::ChangeAlias    => change_alias_keys(app, k.code),
             Mode::ListAliases    => list_keys(app, k.code),
-            Mode::Stats | Mode::Query | Mode::Predict | Mode::Context => output_keys(app, k.code),
+            Mode::Stats | Mode::Query => output_keys(app, k.code),
             Mode::Confirm(_)     => confirm_keys(app, k.code),
         }
     }
@@ -38,15 +37,12 @@ fn main_keys(app: &mut App, code: KeyCode) {
                 let cmd = app.input.clone();
                 app.load_suggestions(&cmd);
             }
-            app.add_alias_focus_command = false;
             app.mode = Mode::AddAlias;
         }
         KeyCode::Char('r') => { app.input.clear(); app.mode = Mode::RemoveAlias; }
         KeyCode::Char('c') => { app.input.clear(); app.mode = Mode::ChangeAlias; }
         KeyCode::Char('l') => { app.reload_aliases(); app.mode = Mode::ListAliases; }
         KeyCode::Char('t') => { app.compute_stats(); app.mode = Mode::Stats; }
-        KeyCode::Char('p') => { app.run_predict(); app.mode = Mode::Predict; }
-        KeyCode::Char('x') => { app.run_context(); app.mode = Mode::Context; }
         KeyCode::Char('Q') => { app.query_input.clear(); app.output_lines.clear(); app.mode = Mode::Query; }
         KeyCode::Down | KeyCode::Char('j') => { let n = app.visible.len(); app.nav_down(n); }
         KeyCode::Up   | KeyCode::Char('k') => app.nav_up(),
@@ -73,13 +69,8 @@ fn add_alias_keys(app: &mut App, code: KeyCode) {
     match code {
         KeyCode::Esc       => app.mode = Mode::Main,
         KeyCode::Tab       => { if !app.suggestions.is_empty() { app.mode = Mode::PickSuggestion; } }
-        KeyCode::Up | KeyCode::Down => { app.add_alias_focus_command = !app.add_alias_focus_command; }
-        KeyCode::Backspace => {
-            if app.add_alias_focus_command { app.input.pop(); } else { app.alias_input.pop(); }
-        }
-        KeyCode::Char(c)   => {
-            if app.add_alias_focus_command { app.input.push(c); } else { app.alias_input.push(c); }
-        }
+        KeyCode::Backspace => { app.alias_input.pop(); }
+        KeyCode::Char(c)   => { app.alias_input.push(c); }
         KeyCode::Enter => {
             if app.input.is_empty() || app.alias_input.is_empty() {
                 app.status = "Fill in both command and alias.".into(); return;

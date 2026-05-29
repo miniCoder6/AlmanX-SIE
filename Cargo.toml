@@ -3,10 +3,6 @@ name = "flux"
 version = "0.1.0"
 edition = "2021"
 
-[lib]
-name = "flux"
-path = "src/lib.rs"
-
 [[bin]]
 name = "flux"
 path = "src/main.rs"
@@ -31,11 +27,3 @@ anyhow       = "1.0"
 
 [patch.crates-io]
 unicode-segmentation = { path = "vendor/unicode-segmentation" }
-
-[dev-dependencies]
-criterion = "0.5"
-
-[[bench]]
-name = "engine_bench"
-harness = false
-

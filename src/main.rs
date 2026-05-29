@@ -1,10 +1,18 @@
-use flux::cli::{Cli, Cmd};
+mod cli;
+mod config;
+mod miner;
+mod query;
+mod search;
+mod shell;
+mod store;
+mod tui;
+
+use cli::{Cli, Cmd};
 use clap::Parser;
 use colored::*;
-use flux::config::Config;
-use flux::search::{AliasSuggester, SearchEngine};
-use flux::store::{Aliases, ShellEvent, Store, Wal};
-use flux::{miner, query, shell, tui};
+use config::Config;
+use search::{AliasSuggester, SearchEngine};
+use store::{Aliases, ShellEvent, Store, Wal};
 
 fn main() {
     let cfg = Config::load();
@@ -22,8 +30,7 @@ fn main() {
     if args.len() == 1 { tui::run(&cfg); return; }
 
     let cli = Cli::parse();
-    let alias_paths = cli.alias_file_path.as_ref().map(|p| vec![p.clone()]).unwrap_or(cfg.alias_file_paths.clone());
-    let aliases = Aliases::new(alias_paths);
+    let aliases = Aliases::new(cfg.alias_file_paths.clone());
 
     match cli.cmd {
         None => tui::run(&cfg),
@@ -123,47 +130,6 @@ fn main() {
             store.delete(&command);
             store.save(&cfg.store_path());
             println!("{}", format!("Suppressed: {}", command).yellow());
-        }
-
-        Some(Cmd::Predict { command }) => {
-            let mut events = vec![];
-            if let Some(wal) = Wal::open(&cfg.wal_path(), cfg.max_wal_events) {
-                wal.replay(|ev| events.push(ev));
-            }
-            let sessions = miner::sessionize(&events, 1800);
-            let mut dag = miner::WorkflowDag::new();
-            dag.ingest(&sessions);
-            let preds = dag.predict(&command, 5);
-            if preds.is_empty() {
-                println!("{}", "No predictions found.".yellow());
-            } else {
-                println!("{}", format!("Predictions after '{}':", command).cyan());
-                for (cmd, prob) in preds {
-                    println!("  {:<20} ({:.0}%)", cmd.bold(), prob * 100.0);
-                }
-            }
-        }
-
-        Some(Cmd::Context { cwd }) => {
-            let store = load_store(&cfg);
-            let target_cwd = cwd.unwrap_or_else(|| std::env::current_dir().unwrap_or_default().to_string_lossy().to_string());
-            let mut results: Vec<_> = store.all_sorted().into_iter()
-                .filter(|r| !r.cwd.is_empty() && r.cwd == target_cwd)
-                .collect();
-            results.sort_by(|a, b| {
-                let s_a = a.score + flux::store::context_boost(a, &target_cwd, "");
-                let s_b = b.score + flux::store::context_boost(b, &target_cwd, "");
-                s_b.cmp(&s_a)
-            });
-            results.truncate(10);
-            if results.is_empty() {
-                println!("{}", "No context suggestions found.".yellow());
-            } else {
-                println!("{}", format!("Context for '{}':", target_cwd).cyan());
-                for r in results {
-                    println!("  {:<20} (freq={}, score={})", r.command.bold(), r.frequency, r.score);
-                }
-            }
         }
 
         Some(Cmd::Tui) => tui::run(&cfg),

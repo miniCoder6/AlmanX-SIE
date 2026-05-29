@@ -287,7 +287,6 @@ fn sg(alias: &str, command: &str, reason: &str) -> Suggestion {
     Suggestion { alias: alias.to_string(), command: command.to_string(), reason: reason.to_string() }
 }
 
-#[cfg(unix)]
 fn system_commands() -> HashSet<String> {
     use std::os::unix::fs::PermissionsExt;
     let mut cmds = HashSet::new();
@@ -298,30 +297,6 @@ fn system_commands() -> HashSet<String> {
                     if let Ok(m) = e.metadata() {
                         if m.is_file() && m.permissions().mode() & 0o111 != 0 {
                             if let Some(n) = e.file_name().to_str() { cmds.insert(n.to_string()); }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    cmds
-}
-
-#[cfg(windows)]
-fn system_commands() -> HashSet<String> {
-    let mut cmds = HashSet::new();
-    if let Ok(path) = std::env::var("PATH") {
-        for dir in path.split(';') {
-            if let Ok(entries) = std::fs::read_dir(dir) {
-                for e in entries.flatten() {
-                    if let Ok(m) = e.metadata() {
-                        if m.is_file() {
-                            if let Some(n) = e.file_name().to_str() {
-                                let lower = n.to_lowercase();
-                                if lower.ends_with(".exe") || lower.ends_with(".cmd") || lower.ends_with(".bat") {
-                                    cmds.insert(n.to_string());
-                                }
-                            }
                         }
                     }
                 }

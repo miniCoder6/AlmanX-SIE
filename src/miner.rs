@@ -43,47 +43,6 @@ impl WorkflowDag {
     }
 }
 
-pub fn mine_workflows(sessions: &[Session], min_freq: usize) -> Vec<(Vec<String>, usize)> {
-    let mut ngrams: HashMap<Vec<String>, usize> = HashMap::new();
-    
-    for s in sessions {
-        let cmds: Vec<String> = s.events.iter().map(|e| e.command.clone()).collect();
-        for len in 2..=4 {
-            for window in cmds.windows(len) {
-                *ngrams.entry(window.to_vec()).or_insert(0) += 1;
-            }
-        }
-    }
-    
-    let mut filtered: Vec<(Vec<String>, usize)> = ngrams.into_iter()
-        .filter(|(_, count)| *count >= min_freq).collect();
-        
-    filtered.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
-    
-    let mut i = 0;
-    while i < filtered.len() {
-        let (seq, count) = filtered[i].clone();
-        if seq.len() > 2 {
-            for j in (i + 1)..filtered.len() {
-                if is_subslice(&seq, &filtered[j].0) {
-                    filtered[j].1 = filtered[j].1.saturating_sub(count);
-                }
-            }
-        }
-        i += 1;
-    }
-    
-    filtered.retain(|(_, count)| *count >= min_freq);
-    filtered.sort_by(|a, b| b.1.cmp(&a.1));
-    filtered
-}
-
-fn is_subslice(main: &[String], sub: &[String]) -> bool {
-    if sub.len() >= main.len() { return false; }
-    main.windows(sub.len()).any(|w| w == sub)
-}
-
-
 // ── Markov Chain ──────────────────────────────────────────────────────────────
 
 #[derive(Default)]

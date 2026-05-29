@@ -1,21 +1,16 @@
-use flux::config::Config;
+mod config;
+mod store;
+
+use config::Config;
 use crossbeam_channel::{bounded, TrySendError};
-use flux::store::{ShellEvent, Store, Wal};
+use store::{ShellEvent, Store, Wal};
 use tokio::io::{AsyncBufReadExt, BufReader};
-#[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 use tracing::{error, info, warn};
 
 const CAP: usize = 1_024;
 const SNAPSHOT_EVERY: u64 = 500;
 
-#[cfg(windows)]
-fn main() {
-    tracing_subscriber::fmt::init();
-    warn!("flux-daemon is not supported on Windows yet. The CLI will write directly to the database.");
-}
-
-#[cfg(unix)]
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
@@ -37,7 +32,6 @@ async fn main() {
     }
 }
 
-#[cfg(unix)]
 async fn handle(stream: UnixStream, tx: crossbeam_channel::Sender<ShellEvent>) {
     let mut lines = BufReader::new(stream).lines();
     while let Ok(Some(line)) = lines.next_line().await {
